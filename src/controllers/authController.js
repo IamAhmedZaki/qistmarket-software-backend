@@ -47,8 +47,6 @@ const signup = async (req, res) => {
 const login = async (req, res) => {
   const { username, password, device_id } = req.body;
 
-  console.log('Login attempt:', { username, device_id });
-
   if (!username || !password) {
     return res.status(400).json({ success: false, error: { code: 400, message: 'Missing username or password' } });
   }
