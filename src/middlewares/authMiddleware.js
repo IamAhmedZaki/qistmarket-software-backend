@@ -11,8 +11,6 @@ const authenticateJWT = (req, res, next) => {
 
   const token = authHeader.split(' ')[1];
 
-  console.log('Authenticating token:', token);
-
   try {
     const decoded = jwt.verify(token, jwtSecret);
     req.user = decoded;

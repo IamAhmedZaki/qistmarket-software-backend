@@ -13,14 +13,14 @@ model User {
   role_id       Int
   username      String   @unique
   password_hash String
+  email         String?  @unique
   cnic          String?
   phone         String?
   device_id     String?
   status        String   @default("active")
   created_at    DateTime @default(now())
   updated_at    DateTime @updatedAt
-
-  role Role @relation(fields: [role_id], references: [id])
+  role          Role     @relation(fields: [role_id], references: [id])
 }
 
 model Role {

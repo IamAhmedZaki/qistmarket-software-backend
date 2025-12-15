@@ -5,16 +5,29 @@ const jwt = require('jsonwebtoken');
 const { jwtSecret } = require('../config/jwtConfig');
 
 const signup = async (req, res) => {
-  const { full_name, username, password, role_id, cnic, phone } = req.body;
+  const { full_name, username, password, role_id, cnic, phone, email } = req.body;
 
   if (!full_name || !username || !password || !role_id) {
     return res.status(400).json({ success: false, error: { code: 400, message: 'Missing required fields' } });
   }
 
   try {
-    const existingUser = await prisma.user.findUnique({ where: { username } });
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { username },
+          ...(email ? [{ email }] : [])
+        ]
+      }
+    });
+
     if (existingUser) {
-      return res.status(409).json({ success: false, error: { code: 409, message: 'Username already exists' } });
+      if (existingUser.username === username) {
+        return res.status(409).json({ success: false, error: { code: 409, message: 'Username already exists' } });
+      }
+      if (email && existingUser.email === email) {
+        return res.status(409).json({ success: false, error: { code: 409, message: 'Email already exists' } });
+      }
     }
 
     const role = await prisma.role.findUnique({ where: { id: role_id } });
@@ -33,6 +46,7 @@ const signup = async (req, res) => {
         role_id,
         cnic,
         phone,
+        email,
         status: 'active',
       },
     });
@@ -45,15 +59,23 @@ const signup = async (req, res) => {
 };
 
 const login = async (req, res) => {
-  const { username, password, device_id } = req.body;
+  const { identifier, password, device_id } = req.body;
 
-  if (!username || !password) {
-    return res.status(400).json({ success: false, error: { code: 400, message: 'Missing username or password' } });
+  if (!identifier || !password) {
+    return res.status(400).json({ success: false, error: { code: 400, message: 'Missing identifier or password' } });
   }
 
   try {
-    const user = await prisma.user.findUnique({
-      where: { username },
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { username: identifier },
+          { email: identifier },
+          { cnic: identifier },
+          { phone: identifier }
+        ],
+        status: 'active'
+      },
       include: { role: true },
     });
 
@@ -70,7 +92,6 @@ const login = async (req, res) => {
       return res.status(401).json({ success: false, error: { code: 401, message: 'Invalid credentials' } });
     }
 
-    // Device binding: Update if provided and different
     if (device_id && user.device_id !== device_id) {
       await prisma.user.update({
         where: { id: user.id },
@@ -81,7 +102,7 @@ const login = async (req, res) => {
     const token = jwt.sign(
       { id: user.id, username: user.username, role: user.role.name },
       jwtSecret,
-      { expiresIn: '30d' } // Configurable
+      { expiresIn: '30d' }
     );
 
     res.json({ success: true, data: { token, user: { id: user.id, username: user.username, role: user.role.name } } });
@@ -93,7 +114,6 @@ const login = async (req, res) => {
 
 const logout = async (req, res) => {
   try {
-    // Since JWT is stateless, we can clear device_id to invalidate device binding
     await prisma.user.update({
       where: { id: req.user.id },
       data: { device_id: null },
