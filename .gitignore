@@ -13,10 +13,10 @@ node_modules
 /public/productuploads
 
 # === MAIN: LOCAL UPLOADS FOLDER ===
-uploads/
-upload/
-src/uploads/
-backend/uploads/
+# uploads/
+# upload/
+# src/uploads/
+# backend/uploads/
 
 # Media files (optional safety)
 *.jpg
