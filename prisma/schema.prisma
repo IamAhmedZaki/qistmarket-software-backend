@@ -1,5 +1,6 @@
 generator client {
   provider = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-1.0.x"]
 }
 
 datasource db {
@@ -20,6 +21,9 @@ model User {
   status        String   @default("active")
   created_at    DateTime @default(now())
   updated_at    DateTime @updatedAt
+  bio           String?  @db.Text
+  image         String?  @db.VarChar(255)
+  coverImage    String?  @db.VarChar(255)
   role          Role     @relation(fields: [role_id], references: [id])
 }
 

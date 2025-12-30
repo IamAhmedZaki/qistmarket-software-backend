@@ -13,7 +13,8 @@ app.get('/', (req, res) => {
   res.status(200).json({ status: 'success', message: 'Server is running!!' });
 });
 
-
+const path = require('path');
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 app.use('/api', authRoutes);
 
 app.listen(PORT, () => {
