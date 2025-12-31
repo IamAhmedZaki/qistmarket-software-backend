@@ -5,31 +5,54 @@ generator client {
 
 datasource db {
   provider = "mysql"
-  url      = env("DATABASE_URL")
+  url = env("DATABASE_URL")
 }
 
 model User {
-  id            Int      @id @default(autoincrement())
-  full_name     String
-  role_id       Int
-  username      String   @unique
+  id Int @id @default(autoincrement())
+  full_name String
+  role_id Int
+  username String @unique
   password_hash String
-  email         String?  @unique
-  cnic          String?
-  phone         String?
-  device_id     String?
-  status        String   @default("active")
-  created_at    DateTime @default(now())
-  updated_at    DateTime @updatedAt
-  bio           String?  @db.Text
-  image         String?  @db.VarChar(255)
-  coverImage    String?  @db.VarChar(255)
-  role          Role     @relation(fields: [role_id], references: [id])
+  email String? @unique
+  cnic String?
+  phone String?
+  device_id String?
+  status String @default("active")
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  bio String? @db.Text
+  image String? @db.VarChar(255)
+  coverImage String? @db.VarChar(255)
+  role Role @relation(fields: [role_id], references: [id])
+  created_orders Order[]
 }
 
 model Role {
-  id              Int     @id @default(autoincrement())
-  name            String
+  id Int @id @default(autoincrement())
+  name String
   permissions_json Json?
   users User[]
+}
+
+model Order {
+  id                  Int      @id @default(autoincrement())
+  order_ref           String   @unique
+  token_number        String   @unique
+  customer_name       String
+  whatsapp_number     String
+  address             String
+  city                String?
+  area                String?
+  product_name        String
+  total_amount        Float
+  advance_amount      Float
+  monthly_amount      Float
+  months              Int
+  channel             String
+  status              String   @default("new")
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+  created_by_user_id  Int?
+  created_by          User?    @relation(fields: [created_by_user_id], references: [id])
 }

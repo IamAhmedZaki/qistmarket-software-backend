@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const authRoutes = require('./src/routes/authRoutes');
+const orderRoutes = require('./src/routes/orderRoutes');
 require('dotenv').config();
 
 const app = express();
@@ -16,6 +17,7 @@ app.get('/', (req, res) => {
 const path = require('path');
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 app.use('/api', authRoutes);
+app.use('/api', orderRoutes);
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

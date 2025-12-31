@@ -1,6 +1,6 @@
 const path = require('path');
 
-const uploadsBaseUrl = `qistmarket-software-backend.vercel.app/uploads`;
+const uploadsBaseUrl = `http://localhost:5000/uploads`;
 
 module.exports = (req, res, next) => {
   if (!req.file && !req.files) return next();
