@@ -10,7 +10,7 @@ const signup = async (req, res) => {
   if (!full_name || !username || !password || !role_id || !cnic || !phone) {
     return res.status(400).json({
       success: false,
-      error: { code: 400, message: 'Invalid request. Required fields are missing.' },
+      error: { code: 400, message: 'Required fields are missing.' },
     });
   }
 
@@ -28,40 +28,22 @@ const signup = async (req, res) => {
 
     if (existingUser) {
       if (existingUser.username === username) {
-        return res.status(409).json({
-          success: false,
-          error: { code: 409, message: 'Username already exists. Please choose a different username.' },
-        });
+        return res.status(409).json({ success: false, error: { code: 409, message: 'Username already exists.' } });
       }
       if (existingUser.cnic === cnic) {
-        return res.status(409).json({
-          success: false,
-          error: { code: 409, message: 'This CNIC is already registered. Each CNIC can only be used once.' },
-        });
+        return res.status(409).json({ success: false, error: { code: 409, message: 'CNIC already registered.' } });
       }
       if (existingUser.phone === phone) {
-        return res.status(409).json({
-          success: false,
-          error: { code: 409, message: 'This phone number is already registered. Please use a different number.' },
-        });
+        return res.status(409).json({ success: false, error: { code: 409, message: 'Phone already registered.' } });
       }
       if (email && existingUser.email === email) {
-        return res.status(409).json({
-          success: false,
-          error: { code: 409, message: 'This email address is already registered. Please use a different email.' },
-        });
+        return res.status(409).json({ success: false, error: { code: 409, message: 'Email already registered.' } });
       }
     }
 
-    const role = await prisma.role.findUnique({
-      where: { id: parseInt(role_id) },
-    });
-
+    const role = await prisma.role.findUnique({ where: { id: parseInt(role_id) } });
     if (!role) {
-      return res.status(404).json({
-        success: false,
-        error: { code: 404, message: 'Invalid role selected.' },
-      });
+      return res.status(404).json({ success: false, error: { code: 404, message: 'Invalid role selected.' } });
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -78,9 +60,7 @@ const signup = async (req, res) => {
         email: email ? email.toLowerCase().trim() : null,
         status: 'active',
       },
-      include: {
-        role: true,
-      },
+      include: { role: true },
     });
 
     return res.status(201).json({
@@ -98,16 +78,19 @@ const signup = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false, error: { code: 500, message: 'Internal server error' } });
+    console.error('Signup error:', error);
+    return res.status(500).json({ success: false, error: { code: 500, message: 'Internal server error' } });
   }
 };
 
-const login = async (req, res) => {
+const loginWeb = async (req, res) => {
   const { identifier, password, device_id } = req.body;
 
   if (!identifier || !password) {
-    return res.status(400).json({ success: false, error: { code: 400, message: 'Invalid request. Required fields are missing.' } });
+    return res.status(400).json({
+      success: false,
+      error: { code: 400, message: 'Identifier and password are required.' },
+    });
   }
 
   try {
@@ -117,30 +100,34 @@ const login = async (req, res) => {
           { username: identifier },
           { email: identifier },
           { cnic: identifier },
-          { phone: identifier }
+          { phone: identifier },
         ],
+        role_id: { in: [4, 5, 6, 7, 8] }, // ALLOWED_WEB_ROLE_IDS
       },
       include: { role: true },
     });
 
     if (!user) {
-      return res.status(401).json({ success: false, error: { code: 401, message: 'The credentials you entered are incorrect. Please check and try again.' } });
+      return res.status(401).json({
+        success: false,
+        error: { code: 401, message: 'No account found with these credentials.' },
+      });
     }
 
     if (user.status !== 'active') {
-      return res.status(403).json({ success: false, error: { code: 403, message: 'Access denied. Your account has been disabled. Please contact the administrator for more information.' } });
+      return res.status(403).json({
+        success: false,
+        error: { code: 403, message: 'Account is not active.' },
+      });
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.password_hash);
     if (!isPasswordValid) {
-      return res.status(401).json({ success: false, error: { code: 401, message: 'The password you entered is incorrect. Please try again.' } });
+      return res.status(401).json({ success: false, error: { code: 401, message: 'Invalid credentials.' } });
     }
 
     if (device_id && user.device_id !== device_id) {
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { device_id },
-      });
+      await prisma.user.update({ where: { id: user.id }, data: { device_id } });
     }
 
     const payload = {
@@ -152,38 +139,102 @@ const login = async (req, res) => {
       phone: user.phone,
       role_id: user.role_id,
       role: user.role.name,
-      device_id: user.device_id,
+      device_id: user.device_id || device_id,
       bio: user.bio,
       image: user.image,
       coverImage: user.coverImage,
-      permissions: JSON.parse(user.role.permissions_json),
+      permissions: user.permissions_json ? JSON.parse(user.permissions_json) : null,
     };
 
     const token = jwt.sign(payload, jwtSecret);
 
-    res.json({
+    return res.json({
       success: true,
-      message: 'Login successful. Redirecting to dashboard...',
+      message: 'Login successful.',
       token,
-      user: {
-        id: user.id,
-        full_name: user.full_name,
-        email: user.email,
-        username: user.username,
-        cnic: user.cnic,
-        phone: user.phone,
-        role_id: user.role_id,
-        role: user.role.name,
-        device_id: user.device_id,
-        bio: user.bio,
-        image: user.image,
-        coverImage: user.coverImage,
-        permissions: JSON.parse(user.role.permissions_json),
-      },
+      user: payload,
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false, error: { code: 500, message: 'Internal server error' } });
+    console.error('Web login error:', error);
+    return res.status(500).json({ success: false, error: { code: 500, message: 'Internal server error' } });
+  }
+};
+
+const loginApp = async (req, res) => {
+  // Similar to loginWeb but with different allowed roles
+  const { identifier, password, device_id } = req.body;
+
+  if (!identifier || !password) {
+    return res.status(400).json({
+      success: false,
+      error: { code: 400, message: 'Identifier and password are required.' },
+    });
+  }
+
+  try {
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { username: identifier },
+          { email: identifier },
+          { cnic: identifier },
+          { phone: identifier },
+        ],
+        role_id: { in: [1, 2, 3] }, // ALLOWED_APP_ROLE_IDS
+      },
+      include: { role: true },
+    });
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        error: { code: 401, message: 'No account found with these credentials.' },
+      });
+    }
+
+    if (user.status !== 'active') {
+      return res.status(403).json({
+        success: false,
+        error: { code: 403, message: 'Account is not active.' },
+      });
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+    if (!isPasswordValid) {
+      return res.status(401).json({ success: false, error: { code: 401, message: 'Invalid credentials.' } });
+    }
+
+    if (device_id && user.device_id !== device_id) {
+      await prisma.user.update({ where: { id: user.id }, data: { device_id } });
+    }
+
+    const payload = {
+      id: user.id,
+      full_name: user.full_name,
+      email: user.email,
+      username: user.username,
+      cnic: user.cnic,
+      phone: user.phone,
+      role_id: user.role_id,
+      role: user.role.name,
+      device_id: user.device_id || device_id,
+      bio: user.bio,
+      image: user.image,
+      coverImage: user.coverImage,
+      permissions: user.permissions_json ? JSON.parse(user.permissions_json) : null,
+    };
+
+    const token = jwt.sign(payload, jwtSecret);
+
+    return res.json({
+      success: true,
+      message: 'Login successful.',
+      token,
+      user: payload,
+    });
+  } catch (error) {
+    console.error('App login error:', error);
+    return res.status(500).json({ success: false, error: { code: 500, message: 'Internal server error' } });
   }
 };
 
@@ -199,23 +250,17 @@ const toggleUserStatus = async (req, res) => {
   }
 
   try {
-    const targetUser = await prisma.user.findUnique({
+    const user = await prisma.user.findUnique({
       where: { id: parseInt(userId) },
       include: { role: true },
     });
 
-    if (!targetUser) {
-      return res.status(404).json({
-        success: false,
-        error: { code: 404, message: 'User not found' },
-      });
+    if (!user) {
+      return res.status(404).json({ success: false, error: { code: 404, message: 'User not found' } });
     }
 
-    if (targetUser.id === req.user.id && status === 'inactive') {
-      return res.status(403).json({
-        success: false,
-        error: { code: 403, message: 'You cannot deactivate your own account.' },
-      });
+    if (user.id === req.user.id && status === 'inactive') {
+      return res.status(403).json({ success: false, error: { code: 403, message: 'Cannot deactivate your own account.' } });
     }
 
     const updatedUser = await prisma.user.update({
@@ -226,7 +271,7 @@ const toggleUserStatus = async (req, res) => {
 
     return res.json({
       success: true,
-      message: `User account ${status === 'active' ? 'activated' : 'deactivated'} successfully.`,
+      message: `User ${status === 'active' ? 'activated' : 'deactivated'} successfully.`,
       data: {
         user: {
           id: updatedUser.id,
@@ -239,6 +284,97 @@ const toggleUserStatus = async (req, res) => {
     });
   } catch (error) {
     console.error('Toggle status error:', error);
+    return res.status(500).json({ success: false, error: { code: 500, message: 'Internal server error' } });
+  }
+};
+
+const getUsers = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 10,
+      search = '',
+      status = '',
+      role = '',
+      sortBy = 'created_at',
+      sortDir = 'desc',
+    } = req.query;
+
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+
+    const where = {
+      role_id: { not: 7 },
+    };
+
+    // Global search
+    if (search.trim()) {
+      where.OR = [
+        { full_name: { contains: search.trim()} },
+        { username: { contains: search.trim()} },
+        { email: { contains: search.trim()} },
+        { phone: { contains: search.trim()} },
+        { cnic: { contains: search.trim()} },
+      ];
+    }
+
+    // Status filter
+    if (status && ['active', 'inactive'].includes(status.toLowerCase())) {
+      where.status = status.toLowerCase();
+    }
+
+    // Role filter
+    if (role.trim()) {
+      where.role = {
+        name: { equals: role.trim() },
+      };
+    }
+
+    // Sorting
+    const orderBy = {};
+    const validSortFields = ['full_name', 'username', 'email', 'phone', 'cnic', 'status', 'created_at'];
+    orderBy[validSortFields.includes(sortBy) ? sortBy : 'created_at'] = sortDir === 'asc' ? 'asc' : 'desc';
+
+    // Total count for pagination
+    const total = await prisma.user.count({ where });
+
+    // Fetch paginated data
+    const users = await prisma.user.findMany({
+      where,
+      include: { role: true },
+      skip: (pageNum - 1) * limitNum,
+      take: limitNum,
+      orderBy,
+    });
+
+    const formattedUsers = users.map((user) => ({
+      id: user.id,
+      full_name: user.full_name,
+      username: user.username,
+      email: user.email,
+      phone: user.phone,
+      cnic: user.cnic,
+      role: user.role.name,
+      status: user.status,
+      permissions: user.permissions_json ? JSON.parse(user.permissions_json) : null,
+    }));
+
+    return res.json({
+      success: true,
+      data: {
+        users: formattedUsers,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          totalPages: Math.ceil(total / limitNum),
+          hasNext: pageNum * limitNum < total,
+          hasPrev: pageNum > 1,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Get users error:', error);
     return res.status(500).json({
       success: false,
       error: { code: 500, message: 'Internal server error' },
@@ -264,45 +400,29 @@ const editUser = async (req, res) => {
     });
 
     if (!targetUser) {
-      return res.status(404).json({
-        success: false,
-        error: { code: 404, message: 'User not found.' },
-      });
+      return res.status(404).json({ success: false, error: { code: 404, message: 'User not found.' } });
     }
 
     if (targetUser.id === req.user.id) {
       return res.status(403).json({
         success: false,
-        error: { code: 403, message: 'You cannot edit your own account using this endpoint.' },
+        error: { code: 403, message: 'Cannot edit your own account via this endpoint.' },
       });
     }
 
+    // Uniqueness checks
     if (username || email || cnic || phone) {
-      const conflictCheck = await prisma.user.findFirst({
+      const conflict = await prisma.user.findFirst({
         where: {
           OR: [
-            username ? { username, NOT: { id: parseInt(userId) } } : {},
-            email ? { email, NOT: { id: parseInt(userId) } } : {},
-            cnic ? { cnic, NOT: { id: parseInt(userId) } } : {},
-            phone ? { phone, NOT: { id: parseInt(userId) } } : {},
+            username ? { username: username.toLowerCase().trim() } : {},
+            email ? { email: email.toLowerCase().trim() } : {},
+            cnic ? { cnic: cnic.trim() } : {},
+            phone ? { phone: phone.trim() } : {},
           ].filter(Boolean),
+          id: { not: targetUser.id },
         },
       });
-
-      if (conflictCheck) {
-        if (conflictCheck.username === username) return res.status(409).json({ success: false, error: { code: 409, message: 'Username already in use.' } });
-        if (conflictCheck.email === email) return res.status(409).json({ success: false, error: { code: 409, message: 'Email already registered.' } });
-        if (conflictCheck.cnic === cnic) return res.status(409).json({ success: false, error: { code: 409, message: 'CNIC already in use.' } });
-        if (conflictCheck.phone === phone) return res.status(409).json({ success: false, error: { code: 409, message: 'Phone number already registered.' } });
-      }
-    }
-
-    let updatedRole;
-    if (role_id) {
-      updatedRole = await prisma.role.findUnique({ where: { id: parseInt(role_id) } });
-      if (!updatedRole) {
-        return res.status(404).json({ success: false, error: { code: 404, message: 'Invalid role selected.' } });
-      }
     }
 
     let password_hash = targetUser.password_hash;
@@ -311,18 +431,20 @@ const editUser = async (req, res) => {
       password_hash = await bcrypt.hash(password, salt);
     }
 
+    const updateData = {
+      ...(full_name && { full_name: full_name.trim() }),
+      ...(username && { username: username.toLowerCase().trim() }),
+      ...(password && { password_hash }),
+      ...(role_id && { role_id: parseInt(role_id) }),
+      ...(cnic && { cnic: cnic.trim() }),
+      ...(phone && { phone: phone.trim() }),
+      ...(email !== undefined && { email: email ? email.toLowerCase().trim() : null }),
+      ...(status && { status }),
+    };
+
     const updatedUser = await prisma.user.update({
       where: { id: parseInt(userId) },
-      data: {
-        full_name: full_name?.trim(),
-        username: username?.toLowerCase().trim(),
-        password_hash,
-        role_id: role_id ? parseInt(role_id) : undefined,
-        cnic: cnic?.trim(),
-        phone: phone?.trim(),
-        email: email?.toLowerCase().trim(),
-        status: status,
-      },
+      data: updateData,
       include: { role: true },
     });
 
@@ -344,10 +466,71 @@ const editUser = async (req, res) => {
     });
   } catch (error) {
     console.error('Edit user error:', error);
-    return res.status(500).json({
+    if (error.code === 'P2002') {
+      return res.status(409).json({ success: false, error: { code: 409, message: 'Unique constraint violation.' } });
+    }
+    return res.status(500).json({ success: false, error: { code: 500, message: 'Internal server error' } });
+  }
+};
+
+const updateUserPermissions = async (req, res) => {
+  const { userId } = req.params;
+  const { permissions_json } = req.body;
+
+  if (!permissions_json || typeof permissions_json !== 'object' || Object.keys(permissions_json).length === 0) {
+    return res.status(400).json({
       success: false,
-      error: { code: 500, message: 'Internal server error' },
+      error: { code: 400, message: 'Valid permissions_json object is required.' },
     });
+  }
+
+  try {
+    const user = await prisma.user.findUnique({ where: { id: parseInt(userId) } });
+    if (!user) {
+      return res.status(404).json({ success: false, error: { code: 404, message: 'User not found.' } });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: parseInt(userId) },
+      data: { permissions_json: JSON.stringify(permissions_json) },
+      include: { role: true },
+    });
+
+    return res.json({
+      success: true,
+      message: 'Permissions updated successfully.',
+      data: {
+        user: {
+          id: updated.id,
+          permissions: updated.permissions_json ? JSON.parse(updated.permissions_json) : {},
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Update permissions error:', error);
+    return res.status(500).json({ success: false, error: { code: 500, message: 'Internal server error' } });
+  }
+};
+
+const deleteUser = async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+    const user = await prisma.user.findUnique({ where: { id: parseInt(userId) } });
+    if (!user) {
+      return res.status(404).json({ success: false, error: { code: 404, message: 'User not found.' } });
+    }
+
+    if (user.id === req.user.id) {
+      return res.status(403).json({ success: false, error: { code: 403, message: 'Cannot delete your own account.' } });
+    }
+
+    await prisma.user.delete({ where: { id: parseInt(userId) } });
+
+    return res.json({ success: true, message: 'User deleted successfully.' });
+  } catch (error) {
+    console.error('Delete user error:', error);
+    return res.status(500).json({ success: false, error: { code: 500, message: 'Internal server error' } });
   }
 };
 
@@ -381,10 +564,7 @@ const getMe = async (req, res) => {
     });
 
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        error: { code: 404, message: 'User not found' },
-      });
+      return res.status(404).json({ success: false, error: { code: 404, message: 'User not found' } });
     }
 
     if (user.role && user.role.permissions_json) {
@@ -392,16 +572,10 @@ const getMe = async (req, res) => {
       delete user.role.permissions_json;
     }
 
-    res.json({
-      success: true,
-      user,
-    });
+    return res.json({ success: true, user });
   } catch (error) {
     console.error('GetMe error:', error);
-    res.status(500).json({
-      success: false,
-      error: { code: 500, message: 'Internal server error' },
-    });
+    return res.status(500).json({ success: false, error: { code: 500, message: 'Internal server error' } });
   }
 };
 
@@ -412,25 +586,21 @@ const updateProfile = async (req, res) => {
   let image = null;
   let coverImage = null;
 
-  if (files && files.image && files.image[0]) {
-    image = files.image[0].url;
-  }
-  if (files && files.coverImage && files.coverImage[0]) {
-    coverImage = files.coverImage[0].url;
-  }
+  if (files?.image?.[0]) image = files.image[0].url;
+  if (files?.coverImage?.[0]) coverImage = files.coverImage[0].url;
 
   try {
-    const updatedData = {};
-    if (full_name) updatedData.full_name = full_name.trim();
-    if (email) updatedData.email = email.toLowerCase().trim();
-    if (phone) updatedData.phone = phone.trim();
-    if (bio !== undefined) updatedData.bio = bio;
-    if (image) updatedData.image = image;
-    if (coverImage) updatedData.coverImage = coverImage;
+    const updateData = {};
+    if (full_name) updateData.full_name = full_name.trim();
+    if (email) updateData.email = email.toLowerCase().trim();
+    if (phone) updateData.phone = phone.trim();
+    if (bio !== undefined) updateData.bio = bio;
+    if (image) updateData.image = image;
+    if (coverImage) updateData.coverImage = coverImage;
 
     const updatedUser = await prisma.user.update({
       where: { id: req.user.id },
-      data: updatedData,
+      data: updateData,
       include: { role: true },
     });
 
@@ -447,21 +617,32 @@ const updateProfile = async (req, res) => {
       bio: updatedUser.bio,
       image: updatedUser.image,
       coverImage: updatedUser.coverImage,
-      permissions: JSON.parse(updatedUser.role.permissions_json),
+      permissions: updatedUser.permissions_json ? JSON.parse(updatedUser.permissions_json) : null,
     };
 
     const newToken = jwt.sign(payload, jwtSecret);
 
-    res.json({
+    return res.json({
       success: true,
-      message: 'Profile updated successfully',
+      message: 'Profile updated successfully.',
       token: newToken,
       user: payload,
     });
   } catch (error) {
     console.error('Update profile error:', error);
-    res.status(500).json({ success: false, error: { code: 500, message: 'Failed to update profile' } });
+    return res.status(500).json({ success: false, error: { code: 500, message: 'Failed to update profile' } });
   }
 };
 
-module.exports = { signup, login, toggleUserStatus, editUser, getMe, updateProfile };
+module.exports = {
+  signup,
+  loginWeb,
+  loginApp,
+  toggleUserStatus,
+  getUsers,
+  editUser,
+  updateUserPermissions,
+  deleteUser,
+  getMe,
+  updateProfile,
+};

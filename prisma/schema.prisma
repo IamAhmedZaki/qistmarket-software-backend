@@ -24,6 +24,7 @@ model User {
   bio String? @db.Text
   image String? @db.VarChar(255)
   coverImage String? @db.VarChar(255)
+  permissions_json Json?
   role Role @relation(fields: [role_id], references: [id])
   created_orders Order[]
 }
