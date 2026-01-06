@@ -115,4 +115,245 @@ const createOrder = async (req, res) => {
   }
 };
 
-module.exports = { createOrder };
+const getOrders = async (req, res) => {
+  const { page = 1, limit = 10, search = '', sortBy = 'created_at', sortDir = 'desc', ...filters } = req.query;
+
+  const skip = (Number(page) - 1) * Number(limit);
+  const take = Number(limit);
+
+  try {
+    const where = {};
+
+    if (search.trim()) {
+      where.OR = [
+        { customer_name: { contains: search } },
+        { whatsapp_number: { contains: search } },
+        { order_ref: { contains: search } },
+        { token_number: { contains: search } },
+        { product_name: { contains: search } },
+        { city: { contains: search } },
+        { area: { contains: search } },
+      ];
+    }
+
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value) {
+        if (key === 'assigned_to') {
+          where.assigned_to = { username: { contains: value } };
+        } else if (key === 'created_by') {
+          where.created_by = { username: { contains: value } };
+        } else {
+          where[key] = { contains: value };
+        }
+      }
+    });
+
+    const orders = await prisma.order.findMany({
+      where,
+      skip,
+      take,
+      orderBy: { [sortBy]: sortDir },
+      include: {
+        created_by: { select: { username: true } },
+        assigned_to: { select: { username: true } },
+      },
+    });
+
+    const total = await prisma.order.count({ where });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        orders,
+        pagination: {
+          page: Number(page),
+          limit: take,
+          total,
+          totalPages: Math.ceil(total / take),
+          hasNext: skip + take < total,
+          hasPrev: Number(page) > 1,
+        },
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      success: false,
+      error: { code: 500, message: 'Internal server error' },
+    });
+  }
+};
+
+const assignOrder = async (req, res) => {
+  const { id } = req.params;
+  const { user_id } = req.body;
+
+  if (!user_id) {
+    return res.status(400).json({
+      success: false,
+      error: { code: 400, message: 'User ID is required.' },
+    });
+  }
+
+  try {
+    const order = await prisma.order.findUnique({ where: { id: Number(id) } });
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 404, message: 'Order not found.' },
+      });
+    }
+
+    if (order.assigned_to_user_id) {
+      return res.status(409).json({
+        success: false,
+        error: { code: 409, message: 'Order is already assigned.' },
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: Number(user_id) },
+      include: { role: true },
+    });
+
+    if (!user || user.role.name !== 'Verification Officer') {
+      return res.status(400).json({
+        success: false,
+        error: { code: 400, message: 'Invalid verification officer.' },
+      });
+    }
+
+    const updatedOrder = await prisma.order.update({
+      where: { id: Number(id) },
+      data: { assigned_to_user_id: Number(user_id) },
+      include: {
+        assigned_to: { select: { username: true } },
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Order assigned successfully.',
+      data: { order: updatedOrder },
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      success: false,
+      error: { code: 500, message: 'Internal server error' },
+    });
+  }
+};
+
+const assignBulk = async (req, res) => {
+  const { order_ids, user_id } = req.body;
+
+  if (!Array.isArray(order_ids) || order_ids.length === 0 || !user_id) {
+    return res.status(400).json({
+      success: false,
+      error: { code: 400, message: 'Invalid input: order_ids array and user_id required.' },
+    });
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: Number(user_id) },
+      include: { role: true },
+    });
+
+    if (!user || user.role.name !== 'Verification Officer') {
+      return res.status(400).json({
+        success: false,
+        error: { code: 400, message: 'Invalid verification officer.' },
+      });
+    }
+
+    const orders = await prisma.order.findMany({
+      where: { id: { in: order_ids.map(Number) } },
+    });
+
+    const alreadyAssigned = orders.filter((o) => o.assigned_to_user_id !== null);
+    if (alreadyAssigned.length > 0) {
+      return res.status(409).json({
+        success: false,
+        error: { code: 409, message: 'Some orders are already assigned.' },
+      });
+    }
+
+    await prisma.order.updateMany({
+      where: { id: { in: order_ids.map(Number) } },
+      data: { assigned_to_user_id: Number(user_id) },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Orders assigned successfully.',
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      success: false,
+      error: { code: 500, message: 'Internal server error' },
+    });
+  }
+};
+
+const autoAssign = async (req, res) => {
+  try {
+    const unassignedOrders = await prisma.order.findMany({
+      where: {
+        assigned_to_user_id: null,
+        status: 'new',
+      },
+    });
+
+    for (const order of unassignedOrders) {
+      const candidates = await prisma.user.findMany({
+        where: {
+          role: { name: 'Verification Officer' },
+          status: 'active',
+        },
+      });
+
+      if (candidates.length === 0) continue;
+
+      let selectedUser = null;
+      let minCount = Infinity;
+
+      for (const candidate of candidates) {
+        const count = await prisma.order.count({
+          where: {
+            assigned_to_user_id: candidate.id,
+            status: { notIn: ['cancelled', 'delivered'] },
+          },
+        });
+
+        if (count < minCount) {
+          minCount = count;
+          selectedUser = candidate;
+        }
+      }
+
+      if (selectedUser) {
+        await prisma.order.update({
+          where: { id: order.id },
+          data: { assigned_to_user_id: selectedUser.id },
+        });
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Automatic assignment completed.',
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      success: false,
+      error: { code: 500, message: 'Internal server error' },
+    });
+  }
+};
+
+module.exports = { createOrder, getOrders, assignOrder, assignBulk, autoAssign };

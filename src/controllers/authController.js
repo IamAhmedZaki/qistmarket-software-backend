@@ -580,23 +580,46 @@ const getMe = async (req, res) => {
 };
 
 const updateProfile = async (req, res) => {
-  const { full_name, email, phone, bio } = req.body;
+  const { full_name, email, phone, bio, remove_image, remove_cover } = req.body;
   const files = req.files;
 
   let image = null;
   let coverImage = null;
 
-  if (files?.image?.[0]) image = files.image[0].url;
-  if (files?.coverImage?.[0]) coverImage = files.coverImage[0].url;
+  if (remove_image === 'true') {
+    image = null;
+  } else if (files?.image?.[0]) {
+    image = files.image[0].url;
+  }
+
+  if (remove_cover === 'true') {
+    coverImage = null;
+  } else if (files?.coverImage?.[0]) {
+    coverImage = files.coverImage[0].url;
+  }
 
   try {
     const updateData = {};
-    if (full_name) updateData.full_name = full_name.trim();
-    if (email) updateData.email = email.toLowerCase().trim();
-    if (phone) updateData.phone = phone.trim();
-    if (bio !== undefined) updateData.bio = bio;
-    if (image) updateData.image = image;
-    if (coverImage) updateData.coverImage = coverImage;
+
+    if (full_name !== undefined)    updateData.full_name = full_name.trim();
+    if (email !== undefined)        updateData.email = email ? email.toLowerCase().trim() : null;
+    if (phone !== undefined)        updateData.phone = phone.trim();
+    if (bio !== undefined)          updateData.bio = bio;
+
+    if (image !== null || remove_image === 'true') {
+      updateData.image = image;
+    }
+    if (coverImage !== null || remove_cover === 'true') {
+      updateData.coverImage = coverImage;
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No changes to apply.',
+        user: req.user,
+      });
+    }
 
     const updatedUser = await prisma.user.update({
       where: { id: req.user.id },
@@ -630,7 +653,44 @@ const updateProfile = async (req, res) => {
     });
   } catch (error) {
     console.error('Update profile error:', error);
-    return res.status(500).json({ success: false, error: { code: 500, message: 'Failed to update profile' } });
+    return res.status(500).json({
+      success: false,
+      error: { code: 500, message: 'Failed to update profile' },
+    });
+  }
+};
+
+const getVerificationOfficers = async (req, res) => {
+  try {
+    const officers = await prisma.user.findMany({
+      where: {
+        role: {
+          name: 'Verification Officer',
+        },
+        status: 'active',
+      },
+      select: {
+        id: true,
+        full_name: true,
+        username: true,
+      },
+      orderBy: {
+        full_name: 'asc',
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        users: officers,
+      },
+    });
+  } catch (error) {
+    console.error('Get verification officers error:', error);
+    return res.status(500).json({
+      success: false,
+      error: { code: 500, message: 'Internal server error' },
+    });
   }
 };
 
@@ -643,6 +703,7 @@ module.exports = {
   editUser,
   updateUserPermissions,
   deleteUser,
+  getVerificationOfficers,
   getMe,
   updateProfile,
 };

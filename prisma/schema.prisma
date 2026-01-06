@@ -27,6 +27,7 @@ model User {
   permissions_json Json?
   role Role @relation(fields: [role_id], references: [id])
   created_orders Order[]
+  assigned_orders Order[] @relation("assignedOrders")
 }
 
 model Role {
@@ -37,23 +38,25 @@ model Role {
 }
 
 model Order {
-  id                  Int      @id @default(autoincrement())
-  order_ref           String   @unique
-  token_number        String   @unique
-  customer_name       String
-  whatsapp_number     String
-  address             String
-  city                String?
-  area                String?
-  product_name        String
-  total_amount        Float
-  advance_amount      Float
-  monthly_amount      Float
-  months              Int
-  channel             String
-  status              String   @default("new")
-  created_at          DateTime @default(now())
-  updated_at          DateTime @updatedAt
-  created_by_user_id  Int?
-  created_by          User?    @relation(fields: [created_by_user_id], references: [id])
+  id Int @id @default(autoincrement())
+  order_ref String @unique
+  token_number String @unique
+  customer_name String
+  whatsapp_number String
+  address String
+  city String?
+  area String?
+  product_name String
+  total_amount Float
+  advance_amount Float
+  monthly_amount Float
+  months Int
+  channel String
+  status String @default("new")
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  created_by_user_id Int?
+  assigned_to_user_id Int?
+  created_by User? @relation(fields: [created_by_user_id], references: [id])
+  assigned_to User? @relation("assignedOrders", fields: [assigned_to_user_id], references: [id])
 }

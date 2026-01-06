@@ -14,6 +14,7 @@ const {
   deleteUser,
   getMe,
   updateProfile,
+  getVerificationOfficers,
 } = require('../controllers/authController');
 
 const { authenticateJWT, requireSuperAdmin } = require('../middlewares/authMiddleware');
@@ -29,6 +30,8 @@ router.post(
   fixUploadPath,
   updateProfile
 );
+
+router.get('/users/verification-officers', authenticateJWT, getVerificationOfficers);
 
 router.post('/signup', authenticateJWT, requireSuperAdmin, signup);
 router.get('/users', authenticateJWT, requireSuperAdmin, getUsers);
