@@ -162,7 +162,7 @@ const loginWeb = async (req, res) => {
 
 const loginApp = async (req, res) => {
   // Similar to loginWeb but with different allowed roles
-  const { identifier, password, device_id } = req.body;
+  const { identifier, password, device_id, fcm_token } = req.body;
 
   if (!identifier || !password) {
     return res.status(400).json({
@@ -208,6 +208,10 @@ const loginApp = async (req, res) => {
       await prisma.user.update({ where: { id: user.id }, data: { device_id } });
     }
 
+    if (fcm_token && user.fcm_token !== fcm_token) {
+      await prisma.user.update({ where: { id: user.id }, data: { fcm_token } });
+    }
+
     const payload = {
       id: user.id,
       full_name: user.full_name,
@@ -218,6 +222,7 @@ const loginApp = async (req, res) => {
       role_id: user.role_id,
       role: user.role.name,
       device_id: user.device_id || device_id,
+      fcm_token: user.fcm_token || fcm_token,
       bio: user.bio,
       image: user.image,
       coverImage: user.coverImage,

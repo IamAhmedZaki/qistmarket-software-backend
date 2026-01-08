@@ -25,6 +25,7 @@ model User {
   image String? @db.VarChar(255)
   coverImage String? @db.VarChar(255)
   permissions_json Json?
+  fcm_token         String?   @db.VarChar(255)
   role Role @relation(fields: [role_id], references: [id])
   created_orders Order[]
   assigned_orders Order[] @relation("assignedOrders")

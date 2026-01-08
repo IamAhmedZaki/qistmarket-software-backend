@@ -2,6 +2,18 @@ const { PrismaClient } = require('@prisma/client');
 const crypto = require('crypto');
 const prisma = new PrismaClient();
 
+const admin = require('firebase-admin');
+
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+    }),
+  });
+}
+
 const createOrder = async (req, res) => {
   const {
     customer_name,
@@ -25,7 +37,6 @@ const createOrder = async (req, res) => {
     });
   }
 
-  // Optional but recommended: validate city/area exist (client-side already filters)
   if (city && area) {
     // You could add server-side check against the same API if desired
   }
@@ -184,58 +195,28 @@ const getOrders = async (req, res) => {
   }
 };
 
-const assignOrder = async (req, res) => {
+const getOrderById = async (req, res) => {
   const { id } = req.params;
-  const { user_id } = req.body;
-
-  if (!user_id) {
-    return res.status(400).json({
-      success: false,
-      error: { code: 400, message: 'User ID is required.' },
-    });
-  }
 
   try {
-    const order = await prisma.order.findUnique({ where: { id: Number(id) } });
-
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        error: { code: 404, message: 'Order not found.' },
-      });
-    }
-
-    if (order.assigned_to_user_id) {
-      return res.status(409).json({
-        success: false,
-        error: { code: 409, message: 'Order is already assigned.' },
-      });
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { id: Number(user_id) },
-      include: { role: true },
-    });
-
-    if (!user || user.role.name !== 'Verification Officer') {
-      return res.status(400).json({
-        success: false,
-        error: { code: 400, message: 'Invalid verification officer.' },
-      });
-    }
-
-    const updatedOrder = await prisma.order.update({
+    const order = await prisma.order.findUnique({
       where: { id: Number(id) },
-      data: { assigned_to_user_id: Number(user_id) },
       include: {
+        created_by: { select: { username: true } },
         assigned_to: { select: { username: true } },
       },
     });
 
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 404, message: 'Order not found' },
+      });
+    }
+
     return res.status(200).json({
       success: true,
-      message: 'Order assigned successfully.',
-      data: { order: updatedOrder },
+      data: { order },
     });
   } catch (error) {
     console.error(error);
@@ -243,6 +224,66 @@ const assignOrder = async (req, res) => {
       success: false,
       error: { code: 500, message: 'Internal server error' },
     });
+  }
+};
+
+const assignOrder = async (req, res) => {
+  const { id } = req.params;
+  const { user_id } = req.body;
+
+  if (!user_id) {
+    return res.status(400).json({ success: false, error: { code: 400, message: 'User ID required' } });
+  }
+
+  try {
+    const order = await prisma.order.findUnique({ where: { id: Number(id) } });
+    if (!order) return res.status(404).json({ success: false, error: { code: 404, message: 'Order not found' } });
+    if (order.assigned_to_user_id) return res.status(409).json({ success: false, error: { code: 409, message: 'Already assigned' } });
+
+    const user = await prisma.user.findUnique({
+      where: { id: Number(user_id) },
+      include: { role: true },
+    });
+
+    if (!user || user.role.name !== 'Verification Officer') {
+      return res.status(400).json({ success: false, error: { code: 400, message: 'Invalid Verification Officer' } });
+    }
+
+    const updatedOrder = await prisma.order.update({
+      where: { id: Number(id) },
+      data: { assigned_to_user_id: Number(user_id) },
+      include: {
+        assigned_to: { select: { username: true, fcm_token: true } },
+        created_by: { select: { username: true } },
+      },
+    });
+
+    if (updatedOrder.assigned_to?.fcm_token) {
+      try {
+        await admin.messaging().send({
+          token: updatedOrder.assigned_to.fcm_token,
+          notification: {
+            title: 'New Order Assigned',
+            body: `Order ${updatedOrder.order_ref} has been assigned to you for verification.`,
+          },
+          data: {
+            order_id: updatedOrder.id.toString(),
+            order_ref: updatedOrder.order_ref,
+          },
+        });
+      } catch (fcmError) {
+        console.error('FCM send failed:', fcmError);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Order assigned successfully',
+      data: { order: updatedOrder },
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: { code: 500, message: 'Internal server error' } });
   }
 };
 
@@ -356,4 +397,4 @@ const autoAssign = async (req, res) => {
   }
 };
 
-module.exports = { createOrder, getOrders, assignOrder, assignBulk, autoAssign };
+module.exports = { createOrder, getOrders, assignOrder, assignBulk, autoAssign, getOrderById };
