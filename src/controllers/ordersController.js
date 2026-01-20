@@ -14,6 +14,26 @@ if (!admin.apps.length) {
   });
 }
 
+async function sendAssignmentNotification(order, user) {
+  if (!user?.fcm_token) return;
+
+  try {
+    await admin.messaging().send({
+      token: user.fcm_token,
+      notification: {
+        title: 'New Order Assigned',
+        body: `Order ${order.order_ref} has been assigned to you for verification.`,
+      },
+      data: {
+        order_id: order.id.toString(),
+        order_ref: order.order_ref,
+      },
+    });
+  } catch (fcmError) {
+    console.error('FCM send failed:', fcmError);
+  }
+}
+
 const createOrder = async (req, res) => {
   const {
     customer_name,
@@ -42,7 +62,6 @@ const createOrder = async (req, res) => {
   }
 
   try {
-    // Duplicate check (same whatsapp + product + day)
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
@@ -64,12 +83,10 @@ const createOrder = async (req, res) => {
       });
     }
 
-    // Generate order_ref
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const randomNum = Math.floor(1000 + Math.random() * 9000);
     const order_ref = `QIST-${dateStr}-${randomNum}`;
 
-    // Generate token_number (8 char uppercase hex)
     const token_number = crypto.randomBytes(4).toString('hex').toUpperCase();
 
     const order = await prisma.order.create({
@@ -195,6 +212,87 @@ const getOrders = async (req, res) => {
   }
 };
 
+const getOrdersWithPagination = async (req, res) => {
+  const { lastId = 0, limit = 10, search = '', ...filters } = req.query;
+
+  const take = Number(limit);
+  const cursorId = Number(lastId);
+
+  try {
+    const baseWhere = {};
+
+    if (search.trim()) {
+      baseWhere.OR = [
+        { customer_name: { contains: search } },
+        { whatsapp_number: { contains: search } },
+        { order_ref: { contains: search } },
+        { token_number: { contains: search } },
+        { product_name: { contains: search } },
+        { city: { contains: search } },
+        { area: { contains: search } },
+      ];
+    }
+
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value) {
+        if (key === 'assigned_to') {
+          baseWhere.assigned_to = { username: value };
+        } else if (key === 'created_by') {
+          baseWhere.created_by = { username: value };
+        } else {
+          baseWhere[key] = { contains: value };
+        }
+      }
+    });
+
+    const totalCount = await prisma.order.count({
+      where: baseWhere
+    });
+
+    const where = { ...baseWhere };
+    if (cursorId > 0) {
+      where.id = { lt: cursorId };
+    }
+
+    const orders = await prisma.order.findMany({
+      where,
+      take,
+      orderBy: { id: 'desc' },
+      include: {
+        created_by: { select: { username: true } },
+        assigned_to: { select: { username: true } },
+      },
+    });
+
+    let nextLastId = null;
+    if (orders.length > 0) {
+      nextLastId = orders[orders.length - 1].id;
+    }
+    
+    const hasMore = orders.length === take;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        orders,
+        pagination: {
+          nextLastId,
+          hasMore,
+          limit: take,
+          count: orders.length,
+          totalCount
+        },
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      success: false,
+      error: { code: 500, message: 'Internal server error' },
+    });
+  }
+};
+
 const getOrderById = async (req, res) => {
   const { id } = req.params;
 
@@ -229,16 +327,48 @@ const getOrderById = async (req, res) => {
 
 const assignOrder = async (req, res) => {
   const { id } = req.params;
-  const { user_id } = req.body;
-
-  if (!user_id) {
-    return res.status(400).json({ success: false, error: { code: 400, message: 'User ID required' } });
-  }
+  const { user_id, action = 'assign' } = req.body;
 
   try {
-    const order = await prisma.order.findUnique({ where: { id: Number(id) } });
-    if (!order) return res.status(404).json({ success: false, error: { code: 404, message: 'Order not found' } });
-    if (order.assigned_to_user_id) return res.status(409).json({ success: false, error: { code: 409, message: 'Already assigned' } });
+    const order = await prisma.order.findUnique({
+      where: { id: Number(id) },
+      include: {
+        assigned_to: { select: { username: true, fcm_token: true } },
+      },
+    });
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    if (action === 'unassign') {
+      if (!order.assigned_to_user_id) {
+        return res.status(400).json({ success: false, message: 'Order is not assigned' });
+      }
+
+      const updated = await prisma.order.update({
+        where: { id: Number(id) },
+        data: { assigned_to_user_id: null },
+        include: {
+          created_by: { select: { username: true } },
+          assigned_to: { select: { username: true } },
+        },
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Order unassigned successfully',
+        data: { order: updated },
+      });
+    }
+
+    if (!user_id) {
+      return res.status(400).json({ success: false, message: 'User ID required for assignment' });
+    }
+
+    if (order.assigned_to_user_id) {
+      return res.status(409).json({ success: false, message: 'Order is already assigned' });
+    }
 
     const user = await prisma.user.findUnique({
       where: { id: Number(user_id) },
@@ -246,7 +376,7 @@ const assignOrder = async (req, res) => {
     });
 
     if (!user || user.role.name !== 'Verification Officer') {
-      return res.status(400).json({ success: false, error: { code: 400, message: 'Invalid Verification Officer' } });
+      return res.status(400).json({ success: false, message: 'Invalid Verification Officer' });
     }
 
     const updatedOrder = await prisma.order.update({
@@ -258,23 +388,7 @@ const assignOrder = async (req, res) => {
       },
     });
 
-    if (updatedOrder.assigned_to?.fcm_token) {
-      try {
-        await admin.messaging().send({
-          token: updatedOrder.assigned_to.fcm_token,
-          notification: {
-            title: 'New Order Assigned',
-            body: `Order ${updatedOrder.order_ref} has been assigned to you for verification.`,
-          },
-          data: {
-            order_id: updatedOrder.id.toString(),
-            order_ref: updatedOrder.order_ref,
-          },
-        });
-      } catch (fcmError) {
-        console.error('FCM send failed:', fcmError);
-      }
-    }
+    await sendAssignmentNotification(updatedOrder, updatedOrder.assigned_to);
 
     return res.status(200).json({
       success: true,
@@ -283,42 +397,58 @@ const assignOrder = async (req, res) => {
     });
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ success: false, error: { code: 500, message: 'Internal server error' } });
+    return res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
 
 const assignBulk = async (req, res) => {
-  const { order_ids, user_id } = req.body;
+  const { order_ids, user_id, action = 'assign' } = req.body;
 
-  if (!Array.isArray(order_ids) || order_ids.length === 0 || !user_id) {
-    return res.status(400).json({
-      success: false,
-      error: { code: 400, message: 'Invalid input: order_ids array and user_id required.' },
-    });
+  if (!Array.isArray(order_ids) || order_ids.length === 0) {
+    return res.status(400).json({ success: false, message: 'order_ids array is required' });
   }
 
   try {
+    if (action === 'unassign') {
+      await prisma.order.updateMany({
+        where: {
+          id: { in: order_ids.map(Number) },
+          assigned_to_user_id: { not: null },
+        },
+        data: { assigned_to_user_id: null },
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Selected orders have been unassigned',
+      });
+    }
+
+    if (!user_id) {
+      return res.status(400).json({ success: false, message: 'user_id required for assignment' });
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: Number(user_id) },
       include: { role: true },
     });
 
     if (!user || user.role.name !== 'Verification Officer') {
-      return res.status(400).json({
-        success: false,
-        error: { code: 400, message: 'Invalid verification officer.' },
-      });
+      return res.status(400).json({ success: false, message: 'Invalid verification officer' });
     }
 
     const orders = await prisma.order.findMany({
       where: { id: { in: order_ids.map(Number) } },
+      include: {
+        assigned_to: { select: { username: true, fcm_token: true } },
+      },
     });
 
     const alreadyAssigned = orders.filter((o) => o.assigned_to_user_id !== null);
     if (alreadyAssigned.length > 0) {
       return res.status(409).json({
         success: false,
-        error: { code: 409, message: 'Some orders are already assigned.' },
+        message: 'Some selected orders are already assigned',
       });
     }
 
@@ -327,74 +457,25 @@ const assignBulk = async (req, res) => {
       data: { assigned_to_user_id: Number(user_id) },
     });
 
-    return res.status(200).json({
-      success: true,
-      message: 'Orders assigned successfully.',
-    });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({
-      success: false,
-      error: { code: 500, message: 'Internal server error' },
-    });
-  }
-};
-
-const autoAssign = async (req, res) => {
-  try {
-    const unassignedOrders = await prisma.order.findMany({
-      where: {
-        assigned_to_user_id: null,
-        status: 'new',
-      },
-    });
-
-    for (const order of unassignedOrders) {
-      const candidates = await prisma.user.findMany({
-        where: {
-          role: { name: 'Verification Officer' },
-          status: 'active',
-        },
-      });
-
-      if (candidates.length === 0) continue;
-
-      let selectedUser = null;
-      let minCount = Infinity;
-
-      for (const candidate of candidates) {
-        const count = await prisma.order.count({
-          where: {
-            assigned_to_user_id: candidate.id,
-            status: { notIn: ['cancelled', 'delivered'] },
-          },
-        });
-
-        if (count < minCount) {
-          minCount = count;
-          selectedUser = candidate;
-        }
-      }
-
-      if (selectedUser) {
-        await prisma.order.update({
-          where: { id: order.id },
-          data: { assigned_to_user_id: selectedUser.id },
-        });
-      }
+    for (const order of orders) {
+      await sendAssignmentNotification(order, user);
     }
 
     return res.status(200).json({
       success: true,
-      message: 'Automatic assignment completed.',
+      message: 'Orders assigned successfully. Notifications sent.',
     });
   } catch (error) {
     console.error(error);
-    return res.status(500).json({
-      success: false,
-      error: { code: 500, message: 'Internal server error' },
-    });
+    return res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
 
-module.exports = { createOrder, getOrders, assignOrder, assignBulk, autoAssign, getOrderById };
+module.exports = { 
+  createOrder, 
+  getOrders, 
+  getOrdersWithPagination,
+  assignOrder, 
+  assignBulk, 
+  getOrderById 
+};
