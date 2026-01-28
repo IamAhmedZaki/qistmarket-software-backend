@@ -25,6 +25,7 @@ router.post('/verification/start', authenticateJWT, startVerification);
 
 // Get verification by order ID
 router.get('/verification/order/:order_id', authenticateJWT, getVerificationByOrderId);
+router.get('/verification/order/:order_id', authenticateJWT, getVerificationByOrderId);
 
 // Save verification data
 router.post('/verification/:verification_id/purchaser', authenticateJWT, savePurchaserVerification);

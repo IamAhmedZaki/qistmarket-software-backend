@@ -33,6 +33,10 @@ model User {
   assigned_orders   Order[]       @relation("assignedOrders")
   verifications     Verification[] @relation("verification_officer")
   approved_verifications Verification[] @relation("verification_approver")
+
+
+  reset_token_hash     String?
+  reset_token_expires  DateTime?
   
   @@index([role_id])
 }
@@ -99,6 +103,7 @@ model Verification {
   grantors                GrantorVerification[]
   nextOfKin               NextOfKinVerification?
   locations               LocationTracking[]
+  verification_locations  VerificationLocation[] 
   documents               VerificationDocument[]
   
   @@index([verification_officer_id])
@@ -125,6 +130,7 @@ model PurchaserVerification {
   years_in_company      String?
   gross_salary          String?
   signature_url         String?
+  nearest_location      String
   
   // Relations
   verification          Verification @relation(fields: [verification_id], references: [id], onDelete: Cascade)
@@ -155,6 +161,7 @@ model GrantorVerification {
   full_residential_address String
   relationship           String
   signature_url          String?
+  nearest_location          String
   
   // Relations
   verification            Verification @relation(fields: [verification_id], references: [id], onDelete: Cascade)
@@ -192,6 +199,36 @@ model LocationTracking {
   @@index([verification_id])
 }
 
+model VerificationLocation {
+  id              Int      @id @default(autoincrement())
+  verification_id Int
+  location_type   String
+  latitude        Float?
+  longitude       Float?
+  address         String?
+  label           String
+  person_type     String?
+  person_id       Int?
+  created_at      DateTime @default(now())
+  
+  verification    Verification @relation(fields: [verification_id], references: [id])
+  photos          VerificationLocationPhoto[] // One-to-many relationship
+  
+  @@index([verification_id])
+  @@index([person_type, person_id])
+}
+
+model VerificationLocationPhoto {
+  id                      Int                 @id @default(autoincrement())
+  verification_location_id Int
+  file_url               String
+  uploaded_at            DateTime            @default(now())
+  
+  verification_location  VerificationLocation @relation(fields: [verification_location_id], references: [id])
+  
+  @@index([verification_location_id])
+}
+
 model VerificationDocument {
   id              Int      @id @default(autoincrement())
   verification_id Int
@@ -206,4 +243,5 @@ model VerificationDocument {
   verification    Verification @relation(fields: [verification_id], references: [id], onDelete: Cascade)
   
   @@index([verification_id])
+  @@index([person_type, person_id])
 }

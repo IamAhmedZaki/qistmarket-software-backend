@@ -873,7 +873,77 @@ const adminApproveVerification = async (req, res) => {
   }
 };
 
+const getVerifications = async (req, res) => {
+  const { page = 1, limit = 10, search = '', sortBy = 'created_at', sortDir = 'desc', ...filters } = req.query;
+
+  const skip = (Number(page) - 1) * Number(limit);
+  const take = Number(limit);
+
+  try {
+    // const where = {};
+
+    // if (search.trim()) {
+    //   where.OR = [
+    //     { customer_name: { contains: search } },
+    //     { whatsapp_number: { contains: search } },
+    //     { order_ref: { contains: search } },
+    //     { token_number: { contains: search } },
+    //     { product_name: { contains: search } },
+    //     { city: { contains: search } },
+    //     { area: { contains: search } },
+    //   ];
+    // }
+
+    // Object.entries(filters).forEach(([key, value]) => {
+    //   if (value) {
+    //     if (key === 'assigned_to') {
+    //       where.assigned_to = { username: { contains: value } };
+    //     } else if (key === 'created_by') {
+    //       where.created_by = { username: { contains: value } };
+    //     } else {
+    //       where[key] = { contains: value };
+    //     }
+    //   }
+    // });
+
+    const orders = await prisma.verification.findMany({
+      // where,
+      skip,
+      take,
+      orderBy: { [sortBy]: sortDir },
+      // include: {
+      //   created_by: { select: { username: true } },
+      //   assigned_to: { select: { username: true } },
+      // },
+    });
+
+    const total = await prisma.verification.count({ where });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        orders,
+        pagination: {
+          page: Number(page),
+          limit: take,
+          total,
+          totalPages: Math.ceil(total / take),
+          hasNext: skip + take < total,
+          hasPrev: Number(page) > 1,
+        },
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      success: false,
+      error: { code: 500, message: 'Internal server error' },
+    });
+  }
+};
+
 module.exports = {
+  getVerifications,
   startVerification,
   savePurchaserVerification,
   saveGrantorVerification,

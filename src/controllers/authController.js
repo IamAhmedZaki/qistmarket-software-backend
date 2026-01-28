@@ -1,8 +1,15 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { jwtSecret } = require('../config/jwtConfig');
+const sendEmail = require('../utils/sendEmail');
+
+const generatePassword = () => {
+  return crypto.randomBytes(4).toString("hex"); // 8 chars
+};
+
 
 const signup = async (req, res) => {
   const { full_name, username, password, role_id, cnic, phone, email } = req.body;
@@ -159,6 +166,151 @@ const loginWeb = async (req, res) => {
     return res.status(500).json({ success: false, error: { code: 500, message: 'Internal server error' } });
   }
 };
+
+const forgotPassword = async (req, res) => {
+  const { identifier } = req.body;
+
+  if (!identifier) {
+    return res.status(400).json({
+      success: false,
+      error: { code: 400, message: "Identifier is required." },
+    });
+  }
+
+  try {
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: identifier },
+          { username: identifier },
+          { cnic: identifier },
+        ],
+      },
+    });
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        error: { code: 401, message: "No account found." },
+      });
+    }
+
+    if (user.status !== "active") {
+      return res.status(403).json({
+        success: false,
+        error: { code: 403, message: "Account is not active." },
+      });
+    }
+
+    // 1️⃣ Generate reset token
+    const resetToken = crypto.randomBytes(32).toString("hex");
+
+    // 2️⃣ Hash token before saving
+    const resetTokenHash = crypto
+      .createHash("sha256")
+      .update(resetToken)
+      .digest("hex");
+
+    // 3️⃣ Save token + expiry (15 minutes)
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        reset_token_hash: resetTokenHash,
+        reset_token_expires: new Date(Date.now() + 15 * 60 * 1000),
+      },
+    });
+
+    // 4️⃣ Reset link
+    const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+
+    // 5️⃣ Send email
+    await sendEmail({
+      to: user.email,
+      subject: "Password Reset Request",
+      html: `
+        <p>Hello ${user.full_name},</p>
+        <p>You requested to reset your password.</p>
+        <p>
+          <a href="${resetLink}">Click here to reset your password</a>
+        </p>
+        <p>This link will expire in 15 minutes.</p>
+        <p>If you did not request this, please ignore this email.</p>
+      `,
+    });
+
+    return res.json({
+      success: true,
+      message: "Password reset link has been sent to your email.",
+    });
+  } catch (error) {
+    console.error("Forgot password error:", error);
+    return res.status(500).json({
+      success: false,
+      error: { code: 500, message: "Internal server error" },
+    });
+  }
+};
+
+const resetPassword = async (req, res) => {
+  const { token, newPassword } = req.body;
+
+  if (!token || !newPassword) {
+    return res.status(400).json({
+      success: false,
+      error: { code: 400, message: "Token and new password are required." },
+    });
+  }
+
+  try {
+    // 1️⃣ Hash received token
+    const tokenHash = crypto
+      .createHash("sha256")
+      .update(token)
+      .digest("hex");
+
+    // 2️⃣ Find valid token
+    const user = await prisma.user.findFirst({
+      where: {
+        reset_token_hash: tokenHash,
+        reset_token_expires: {
+          gt: new Date(),
+        },
+      },
+    });
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        error: { code: 401, message: "Invalid or expired reset token." },
+      });
+    }
+
+    // 3️⃣ Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 12);
+
+    // 4️⃣ Update password + clear token
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        password_hash: hashedPassword,
+        reset_token_hash: null,
+        reset_token_expires: null,
+      },
+    });
+
+    return res.json({
+      success: true,
+      message: "Password has been reset successfully.",
+    });
+  } catch (error) {
+    console.error("Reset password error:", error);
+    return res.status(500).json({
+      success: false,
+      error: { code: 500, message: "Internal server error" },
+    });
+  }
+};
+
 
 const loginApp = async (req, res) => {
   // Similar to loginWeb but with different allowed roles
@@ -361,6 +513,9 @@ const getUsers = async (req, res) => {
       cnic: user.cnic,
       role: user.role.name,
       status: user.status,
+      bio: user.bio,
+      image: user.image,
+      coverImage: user.coverImage,
       permissions: user.permissions_json ? JSON.parse(user.permissions_json) : null,
     }));
 
@@ -389,13 +544,26 @@ const getUsers = async (req, res) => {
 
 const editUser = async (req, res) => {
   const { userId } = req.params;
-  const { full_name, username, role_id, cnic, phone, email, password, status } = req.body;
+  const { full_name, username, role_id, cnic, phone, email, password, status,bio } = req.body;
 
-  if (!full_name && !username && !role_id && !cnic && !phone && !email && !password && !status) {
+  if (!full_name && !username && !role_id && !cnic && !phone && !email && !password && !status && !bio) {
     return res.status(400).json({
       success: false,
       error: { code: 400, message: 'No fields provided to update.' },
     });
+  }
+
+   const files = req.files;
+
+  let image = null;
+  let coverImage = null;
+
+   if (files?.image?.[0]) {
+    image = files.image[0].url;
+  }
+
+ if (files?.coverImage?.[0]) {
+    coverImage = files.coverImage[0].url;
   }
 
   try {
@@ -445,6 +613,9 @@ const editUser = async (req, res) => {
       ...(phone && { phone: phone.trim() }),
       ...(email !== undefined && { email: email ? email.toLowerCase().trim() : null }),
       ...(status && { status }),
+      ...(bio&&{bio:bio}),
+      ...(image &&{image:image}),
+      ...(coverImage &&{coverImage:coverImage}),
     };
 
     const updatedUser = await prisma.user.update({
@@ -711,4 +882,6 @@ module.exports = {
   getVerificationOfficers,
   getMe,
   updateProfile,
+  forgotPassword,
+  resetPassword
 };

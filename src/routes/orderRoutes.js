@@ -6,10 +6,12 @@ const {
   getOrdersWithPagination,
   assignOrder, 
   assignBulk, 
-  getOrderById 
+  getOrderById,
+  getVerificationOrders
 } = require('../controllers/ordersController');
 const { authenticateJWT } = require('../middlewares/authMiddleware');
 
+router.get('/orders/verification-pending', getVerificationOrders);
 router.post('/orders/create', authenticateJWT, createOrder);
 router.get('/orders', authenticateJWT, getOrders);
 router.get('/orders/scroll', getOrdersWithPagination);

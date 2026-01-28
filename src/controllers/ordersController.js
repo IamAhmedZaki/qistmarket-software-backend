@@ -471,11 +471,113 @@ const assignBulk = async (req, res) => {
   }
 };
 
+const getVerificationOrders = async (req, res) => {
+  try {
+    const orders = await prisma.order.findMany({
+      where: {
+        assigned_to_user_id: { not: null },
+        verification: {
+          isNot: null,
+        },
+      },
+      orderBy: {
+        created_at: 'desc',
+      },
+      select: {
+        id: true,
+        order_ref: true,
+        token_number: true,
+        customer_name: true,
+        whatsapp_number: true,
+        address: true,
+        city: true,
+        area: true,
+        product_name: true,
+        total_amount: true,
+        advance_amount: true,
+        monthly_amount: true,
+        months: true,
+        channel: true,
+        status: true,
+        created_at: true,
+        updated_at: true,
+        
+        assigned_to: {
+          select: {
+            id: true,
+            username: true,
+            full_name: true,
+          },
+        },
+        
+        created_by: {
+          select: {
+            username: true,
+            full_name: true,
+          },
+        },
+        
+        verification: {
+          select: {
+            id: true,
+            status: true,
+            start_time: true,
+            end_time: true,
+            is_approved: true,
+            admin_remarks: true,
+            approved_at: true,
+            
+            verification_officer: {
+              select: {
+                id: true,
+                username: true,
+                full_name: true,
+              },
+            },
+            
+            approved_by_user: {
+              select: {
+                id: true,
+                username: true,
+                full_name: true,
+              },
+            },
+            
+            purchaser: true,
+            grantors: true,
+            nextOfKin: true,
+            
+            locations: {
+              orderBy: { timestamp: 'desc' },
+            },
+            
+            documents: {
+              orderBy: { uploaded_at: 'desc' },
+            },
+          },
+        },
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: { orders },
+    });
+  } catch (error) {
+    console.error('Error in getVerificationOrders:', error);
+    return res.status(500).json({
+      success: false,
+      error: { code: 500, message: 'Internal server error' },
+    });
+  }
+};
+
 module.exports = { 
   createOrder, 
   getOrders, 
   getOrdersWithPagination,
   assignOrder, 
   assignBulk, 
-  getOrderById 
+  getOrderById,
+  getVerificationOrders
 };
